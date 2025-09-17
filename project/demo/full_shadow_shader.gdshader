@@ -33,8 +33,6 @@ render_mode blend_mix,depth_draw_opaque,cull_front,diffuse_burley,specular_schli
 #define DECODE_SCALE(control) (0.9 - float(((control >>7u & 0x7u) + 3u) % 8u + 1u) * 0.1)
 #define DECODE_HOLE(control) bool(control >>2u & 0x1u)
 
-#define TEXTURE_ID_PROJECTED(id) bool((_texture_vertical_projections >> uint(id)) & 0x1u)
-
 #if CURRENT_RENDERER == RENDERER_COMPATIBILITY
     #define fma(a, b, c) ((a) * (b) + (c))
     #define dFdxCoarse(a) dFdx(a)
@@ -45,7 +43,6 @@ render_mode blend_mix,depth_draw_opaque,cull_front,diffuse_burley,specular_schli
 uniform vec3 _camera_pos = vec3(0.f);
 uniform float _mesh_size = 48.f;
 uniform uint _background_mode = 1u; // NONE = 0, FLAT = 1, NOISE = 2
-uniform uint _mouse_layer = 0x80000000u; // Layer 32
 uniform float _vertex_spacing = 1.0;
 uniform float _vertex_density = 1.0; // = 1./_vertex_spacing
 uniform float _region_size = 1024.0;
@@ -53,63 +50,11 @@ uniform float _region_texel_size = 0.0009765625; // = 1./region_size
 uniform int _region_map_size = 32;
 uniform int _region_map[1024];
 uniform vec2 _region_locations[1024];
-uniform float _texture_normal_depth_array[32];
-uniform float _texture_ao_strength_array[32];
-uniform float _texture_roughness_mod_array[32];
-uniform float _texture_uv_scale_array[32];
-uniform uint _texture_vertical_projections;
-uniform vec2 _texture_detile_array[32];
-uniform vec4 _texture_color_array[32];
 uniform highp sampler2DArray _height_maps : repeat_disable;
 uniform highp sampler2DArray _control_maps : repeat_disable;
 #define FILTER_LINEAR
-uniform highp sampler2DArray _color_maps : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
-uniform highp sampler2DArray _texture_array_albedo : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
-uniform highp sampler2DArray _texture_array_normal : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
 
 // Public uniforms
-
-group_uniforms general;
-uniform bool flat_terrain_normals = false;
-uniform float blend_sharpness : hint_range(0, 1) = 0.5;
-uniform bool vertical_projection = true;
-uniform float projection_threshold : hint_range(0.0, 0.99, 0.01) = 0.8;
-group_uniforms;
-
-#define AUTO_SHADER
-group_uniforms auto_shader;
-uniform float auto_slope : hint_range(0, 10) = 1.0;
-uniform float auto_height_reduction : hint_range(0, 1) = 0.1;
-uniform int auto_base_texture : hint_range(0, 31) = 0;
-uniform int auto_overlay_texture : hint_range(0, 31) = 1;
-group_uniforms;
-
-group_uniforms dual_scaling;
-uniform int dual_scale_texture : hint_range(0,31) = 0;
-uniform float dual_scale_reduction : hint_range(0.001,1) = 0.3;
-uniform float tri_scale_reduction : hint_range(0.001,1) = 0.3;
-uniform float dual_scale_far : hint_range(0,1000) = 170.0;
-uniform float dual_scale_near : hint_range(0,1000) = 100.0;
-group_uniforms;
-
-group_uniforms macro_variation;
-uniform bool macro_variation = true;
-uniform vec3 macro_variation1 : source_color = vec3(1.);
-uniform vec3 macro_variation2 : source_color = vec3(1.);
-uniform float macro_variation_slope : hint_range(0., 1.)  = 0.333;
-uniform highp sampler2D noise_texture : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
-
-uniform float noise1_scale : hint_range(0.001, 1.) = 0.04; // Used for macro variation 1. Scaled up 10x
-uniform float noise1_angle : hint_range(0, 6.283) = 0.;
-uniform vec2 noise1_offset = vec2(0.5);
-uniform float noise2_scale : hint_range(0.001, 1.) = 0.076;	// Used for macro variation 2. Scaled up 10x
-group_uniforms;
-
-group_uniforms mipmaps;
-uniform float bias_distance : hint_range(0.0, 16384.0, 0.1) = 512.0;
-uniform float mipmap_bias : hint_range(0.5, 1.5, 0.01) = 1.0;
-uniform float depth_blur : hint_range(0.0, 35.0, 0.1) = 0.0;
-group_uniforms;
 
 group_uniforms world_background_noise;
 uniform bool world_noise_fragment_normals = false;
@@ -121,8 +66,6 @@ uniform float world_noise_scale : hint_range(0.25, 20, 0.01) = 5.0;
 uniform float world_noise_height : hint_range(0, 1000, 0.1) = 64.0;
 uniform vec3 world_noise_offset = vec3(0.0);
 group_uniforms;
-varying vec2 world_noise_ddxy;
-
 
 // Varyings & Types
 
@@ -152,16 +95,6 @@ ivec3 get_index_coord(const vec2 uv, const int search) {
 	return ivec3(ivec2(mod(r_uv,_region_size)), layer_index);
 }
 
-// Takes in descaled (world_space / region_size) world to region space XZ (UV2) coordinates, returns vec3 with:
-// XY: (0. to 1.) coordinates within a region
-// Z: layer index used for texturearrays, -1 if not in a region
-vec3 get_index_uv(const vec2 uv2) {
-	ivec2 pos = ivec2(floor(uv2)) + (_region_map_size / 2);
-	int bounds = int(uint(pos.x | pos.y) < uint(_region_map_size));
-	int layer_index = _region_map[ pos.y * _region_map_size + pos.x ] * bounds - 1;
-	return vec3(uv2 - _region_locations[layer_index], float(layer_index));
-}
-
 // World Noise Functions Start
 
 // Takes in UV2 region space coordinates, returns 1.0 or 0.0 if a region is present or not.
@@ -185,10 +118,6 @@ float region_blend(vec2 uv2) {
 	vec2 w = smoothstep(vec2(0.0), vec2(1.0), fract(uv2));
 	float blend = mix(mix(d, c, w.x), mix(a, b, w.x), w.y);
     return 1.0 - blend;
-}
-
-float hashf(float f) {
-	return fract(sin(f) * 1e4);
 }
 
 float hashv2(vec2 v) {
@@ -290,11 +219,10 @@ void vertex() {
 	uint control = floatBitsToUint(texelFetch(_control_maps, v_region, 0)).r;
 	bool hole = DECODE_HOLE(control);
 
-	// Show holes to all cameras except mouse camera (on exactly 1 layer)
-	if ( !(CAMERA_VISIBLE_LAYERS == _mouse_layer) && 
-			(hole || (_background_mode == 0u && v_region.z == -1))) {
+	// Show holes to all cameras except mouse camera (on exactly 1 layer). As this is shadow shader though, there's never a mouse layer.
+	if (hole || (_background_mode == 0u && v_region.z == -1)) {
 		v_vertex.x = 0. / 0.;
-	} else {		
+	} else {
 		// Set final vertex height & calculate vertex normals. 3 lookups
 		ivec3 coord_a = get_index_coord(start_pos, VERTEX_PASS);
 		ivec3 coord_b = get_index_coord(end_pos, VERTEX_PASS);
@@ -308,7 +236,8 @@ void vertex() {
 				get_noise_height(nuv_b + vec2(_region_texel_size, 0.0)),vertex_lerp);
 			float nv = mix(get_noise_height(nuv_a + vec2(0.0, _region_texel_size)),
 				get_noise_height(nuv_b + vec2(0.0, _region_texel_size)),vertex_lerp);
-			world_noise_ddxy = vec2(nh - nu, nh - nv);
+			//This does nothing?
+			//world_noise_ddxy = vec2(nh - nu, nh - nv);
 			h += nh;
 		}
 
