@@ -184,6 +184,14 @@ float get_noise_height(const vec2 uv) {
 
 // World Noise Functions End
 
+bool is_orthographic(mat4 matrix) {
+	vec3 a1 = vec3(0, 1, 0);
+	vec3 b1 = vec3(0, 1, 1);
+	vec4 a2 = matrix * vec4(a1, 1);
+	vec4 b2 = matrix * vec4(b1, 1);
+	return a2.w == b2.w;
+}
+
 void vertex() {
 	// Get vertex of flat plane in world coordinates and set world UV
 	vec3 v_vertex = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
@@ -294,18 +302,45 @@ void vertex() {
 
 	`cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);`
 	*/
-	float depth_offset = 0.5;
-	float vertical_offset = 0.0;
+	//float depth_offset = float(int(TIME * 100.0) % 500) / 10000.0;
+	float depth_offset = 0.0075;
+	float vertical_offset = 0.05;
 	
 	//DIRECTIONAL: Calculate the view space distance between far and near clip planes (needed to counteract Godot's per-cascade shadow bias).
 	//See Godot code renderer_scene_cull.cpp:2415: cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);
 	float view_frustrum_depth = length(
-		(INV_PROJECTION_MATRIX * vec4(0.5, 0.5, 1.0, 1.0)).xyz -
-		(INV_PROJECTION_MATRIX * vec4(0.5, 0.5, 0, 1.0)).xyz
+		(INV_PROJECTION_MATRIX * vec4(0.0, 0.0, 1.0, 1.0)).xyz -
+		(INV_PROJECTION_MATRIX * vec4(0.0, 0.0, 0, 1.0)).xyz
 	);
 	//DIRECTIONAL: See Godot code light_storage.cpp:715: light_data.shadow_bias[j] = light->param[RS::LIGHT_PARAM_SHADOW_BIAS] / 100.0 * bias_scale;
-	depth_offset = depth_offset * 0.01 * view_frustrum_depth;
+	//depth_offset = depth_offset * 0.01 * view_frustrum_depth;
 	
+	bool is_directional_light = is_orthographic(PROJECTION_MATRIX);
 	// Convert model space to view space w/ skip_vertex_transform render mode
-	VERTEX = (VIEW_MATRIX * vec4(v_vertex - vec3(0, vertical_offset, 0), 1.0)).xyz + vec3(0, 0, depth_offset);
+	VERTEX = (VIEW_MATRIX * vec4(v_vertex - vec3(0, vertical_offset, 0), 1.0)).xyz;
+	//VERTEX = (VIEW_MATRIX * vec4(v_vertex - vec3(0, vertical_offset, 0), 1.0)).xyz + vec3(0, 0, depth_offset);
+	POSITION = (PROJECTION_MATRIX * vec4(VERTEX, 1));
+	//POSITION += vec4(0, 0, depth_offset, 0);
+	/*if (is_orthographic(PROJECTION_MATRIX)) {
+		POSITION += vec4(0, 0, depth_offset / view_frustrum_depth * 100.0, 0);
+	} else {
+	}*/
+	POSITION = vec4(POSITION.x, POSITION.y, (POSITION.z * POSITION.w + depth_offset) / POSITION.w, POSITION.w);
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
