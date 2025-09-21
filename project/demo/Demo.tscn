@@ -1,4 +1,4 @@
-[gd_scene load_steps=15 format=3 uid="uid://chol2xlfbq7cu"]
+[gd_scene load_steps=18 format=3 uid="uid://chol2xlfbq7cu"]
 
 [ext_resource type="Script" uid="uid://chstoagn42gbr" path="res://demo/src/DemoScene.gd" id="1_k7qca"]
 [ext_resource type="PackedScene" uid="uid://d2jihfohphuue" path="res://demo/components/UI.tscn" id="2_nqak5"]
@@ -9,6 +9,15 @@
 [ext_resource type="Shader" uid="uid://dc6fmy2ttwn34" path="res://demo/full_shadow_shader.gdshader" id="7_fhs52"]
 [ext_resource type="PackedScene" uid="uid://d3sr0a7dxfkr8" path="res://addons/terrain_3d/extras/particle_example/Terrain3DParticles.tscn" id="8_fwrtk"]
 [ext_resource type="Terrain3DAssets" uid="uid://dal3jhw6241qg" path="res://demo/data/assets.tres" id="8_g2of2"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_egbwy"]
+size = Vector3(50, 50, 50)
+
+[sub_resource type="QuadMesh" id="QuadMesh_egbwy"]
+size = Vector2(10, 10)
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_fhs52"]
+cull_mode = 2
 
 [sub_resource type="Gradient" id="Gradient_vr1m7"]
 offsets = PackedFloat32Array(0.2, 1)
@@ -33,7 +42,6 @@ noise = SubResource("FastNoiseLite_d8lcj")
 
 [sub_resource type="Terrain3DMaterial" id="Terrain3DMaterial_jrc01"]
 _shader_parameters = {
-&"": null,
 "_mouse_layer": 2147483648,
 "auto_base_texture": 0,
 "auto_height_reduction": 0.05,
@@ -110,13 +118,35 @@ script = ExtResource("1_k7qca")
 
 [node name="DirectionalLight3D" parent="Environment" index="1"]
 transform = Transform3D(-0.933581, -0.122569, -0.336755, 0, -0.939692, 0.34202, -0.358368, 0.319303, 0.877278, 0, 0, 0)
-directional_shadow_max_distance = 4000.0
 
 [node name="Borders" parent="." instance=ExtResource("3_cw38j")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 512, -3, 512)
 collision_mask = 3
 
 [node name="Tunnel" parent="." instance=ExtResource("3_kdh0b")]
+
+[node name="Shadow check box" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 1.49012e-08, 0, 1, 0, -1.49012e-08, 0, 1, 289.19, 98.6837, -1825.67)
+mesh = SubResource("BoxMesh_egbwy")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Shadow check box"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -25.0977, 19.3975, -6.29675)
+mesh = SubResource("QuadMesh_egbwy")
+surface_material_override/0 = SubResource("StandardMaterial3D_fhs52")
+
+[node name="OmniLight3D" type="OmniLight3D" parent="Shadow check box"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -28.6282, 13.0065, 6.74158)
+light_color = Color(0, 1, 0, 1)
+light_energy = 16.0
+shadow_enabled = true
+omni_range = 20.0
+
+[node name="SpotLight3D" type="SpotLight3D" parent="Shadow check box"]
+transform = Transform3D(0.83411, 0, -0.551598, 0, 1, 0, 0.551598, 0, 0.83411, -28.2184, 0, 2.59399)
+light_color = Color(1, 0, 0, 1)
+light_energy = 30.0
+shadow_enabled = true
+spot_range = 25.0
 
 [node name="Player" parent="." instance=ExtResource("3_ht63y")]
 transform = Transform3D(0.176947, 0, -0.98422, 0, 1, 0, 0.98422, 0, 0.176947, 223.143, 105.348, -1833.08)
@@ -128,6 +158,7 @@ assets = ExtResource("8_g2of2")
 collision_mask = 3
 collision_target = NodePath("../Player")
 clipmap_target = NodePath("../Player")
+cast_shadows = 3
 shadow_material = SubResource("ShaderMaterial_fwrtk")
 top_level = true
 metadata/_edit_lock_ = true

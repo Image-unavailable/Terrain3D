@@ -1,11 +1,11 @@
 shader_type spatial;
 render_mode blend_mix,depth_draw_opaque,cull_front,diffuse_burley,specular_schlick_ggx,skip_vertex_transform;
 
-/* The terrain depends on this shader to function. Don't change most things in vertex() or 
- * terrain normal calculations in fragment(). You probably only want to customize the 
+/* The terrain depends on this shader to function. Don't change most things in vertex() or
+ * terrain normal calculations in fragment(). You probably only want to customize the
  * material calculation and PBR application in fragment().
  *
- * Uniforms that begin with _ are private and will not display in the inspector. However, 
+ * Uniforms that begin with _ are private and will not display in the inspector. However,
  * you can set them via code. You are welcome to create more of your own hidden uniforms.
  *
  * This system only supports albedo, height, normal, roughness. Most textures don't need the other
@@ -158,7 +158,7 @@ float world_noise(vec2 p) {
 		float(world_noise_max_octaves) - floor(v_vertex_xz_dist/(world_noise_lod_distance)),
 		float(world_noise_min_octaves), float(world_noise_max_octaves))
 	);
-	
+
     for( int i=0; i < octaves; i++ ) {
         vec3 n = noise2D(p);
         d += n.yz;
@@ -243,7 +243,69 @@ void vertex() {
 
 		v_vertex.y = h;
 	}
+	
+	//Gotta find ways to compute good shadow offsets, and that requires digging into the engine's code.
+	//Directional lights, for example, have a shadow bias that varies from cascade to cascade so it's complex to counteract the effect.
+	/*
+	From Godot 4.5 source at: servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl:2081
 
+	```glsl
+	#define BIAS_FUNC(m_var, m_idx)                                                                 \
+		m_var.xyz += light_dir * directional_lights.data[i].shadow_bias[m_idx];                     \
+		vec3 normal_bias = base_normal_bias * directional_lights.data[i].shadow_normal_bias[m_idx]; \
+		normal_bias -= light_dir * dot(light_dir, normal_bias);                                     \
+		m_var.xyz += normal_bias;
+	```
+
+	`m_idx` seems to be the cascade for which to compute the bias, either 0,1,2,3.
+
+	Due to `directional_lights.data[i].shadow_bias[m_idx]`, it seems like each cascade has a different CPU-set bias, not computed from the shader.
+
+	This `DirectionalLightdata` GPU struct is defined at servers/rendering/renderer_rd/shaders/light_data_inc.glsl:57
+
+	The CPU equivalent is at servers/rendering/renderer_rd/storage_rd/light_storage.h:186
+
+	Shadow bias is a vector4 and that's fine, because once again each cascade has a separate bias.
+
+	Only one line of code in the entire engine ever writes to that buffer, and it's this one at: servers/rendering/renderer_rd/storage_rd/light_storage.cpp:715
+
+	```cpp
+	float bias_scale = light_instance->shadow_transform[j].bias_scale * light_data.soft_shadow_scale;
+	light_data.shadow_bias[j] = light->param[RS::LIGHT_PARAM_SHADOW_BIAS] / 100.0 * bias_scale;
+	```
+
+	`bias_scale` comes from `ShadowTransform shadow_transform[6];` at servers/rendering/renderer_rd/storage_rd/light_storage.h:107
+
+	Shadow transforms are set through `light_instance_set_shadow_transform` in from servers/rendering/renderer_rd/storage_rd/light_storage.cpp:515
+
+	Shadow transforms for directional lights are set from servers/rendering/renderer_scene_cull.cpp:3358
+
+	```cpp
+	const Cull::Shadow::Cascade &c = cull.shadows[i].cascades[j];
+	//			print_line("shadow " + itos(i) + " cascade " + itos(j) + " elements: " + itos(c.cull_result.size()));
+	RSG::light_storage->light_instance_set_shadow_transform(cull.shadows[i].light_instance, c.projection, c.transform, c.zfar, c.split, j, c.shadow_texel_size, c.bias_scale, c.range_begin, c.uv_scale);
+	```
+
+	...Which takes the bias straight through a Cascade struct! So much passing stuff around.
+
+	Once again, each cascade has its own shadow bias.
+
+	And finally, we get to the only line of code in the entire engine that sets the shadow bias for cascades: servers/rendering/renderer_scene_cull.cpp:2418
+
+	`cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);`
+	*/
+	float depth_offset = 0.5;
+	float vertical_offset = 0.0;
+	
+	//DIRECTIONAL: Calculate the view space distance between far and near clip planes (needed to counteract Godot's per-cascade shadow bias).
+	//See Godot code renderer_scene_cull.cpp:2415: cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);
+	float view_frustrum_depth = length(
+		(INV_PROJECTION_MATRIX * vec4(0.5, 0.5, 1.0, 1.0)).xyz -
+		(INV_PROJECTION_MATRIX * vec4(0.5, 0.5, 0, 1.0)).xyz
+	);
+	//DIRECTIONAL: See Godot code light_storage.cpp:715: light_data.shadow_bias[j] = light->param[RS::LIGHT_PARAM_SHADOW_BIAS] / 100.0 * bias_scale;
+	depth_offset = depth_offset * 0.01 * view_frustrum_depth;
+	
 	// Convert model space to view space w/ skip_vertex_transform render mode
-	VERTEX = (VIEW_MATRIX * vec4(v_vertex, 1.0)).xyz;
+	VERTEX = (VIEW_MATRIX * vec4(v_vertex - vec3(0, vertical_offset, 0), 1.0)).xyz + vec3(0, 0, depth_offset);
 }
