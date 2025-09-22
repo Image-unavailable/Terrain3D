@@ -142,11 +142,12 @@ shadow_enabled = true
 omni_range = 20.0
 
 [node name="SpotLight3D" type="SpotLight3D" parent="Shadow check box"]
-transform = Transform3D(0.83411, 0, -0.551598, 0, 1, 0, 0.551598, 0, 0.83411, -28.2184, 0, 2.56958)
+transform = Transform3D(1, 7.99266e-09, 2.32491e-09, -7.99266e-09, 0.843978, 0.536377, 2.32491e-09, -0.536377, 0.843978, -26.5396, 25.0114, 21.64)
 light_color = Color(1, 0, 0, 1)
-light_energy = 30.0
+light_energy = 100.0
 shadow_enabled = true
-spot_range = 25.0
+spot_range = 80.0
+spot_angle = 20.0
 
 [node name="Player" parent="." instance=ExtResource("3_ht63y")]
 transform = Transform3D(0.176947, 0, -0.98422, 0, 1, 0, 0.98422, 0, 0.176947, 223.143, 105.348, -1833.08)
