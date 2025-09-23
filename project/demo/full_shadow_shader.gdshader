@@ -57,10 +57,11 @@ uniform highp sampler2DArray _control_maps : repeat_disable;
 // Public uniforms
 
 group_uniforms shadow_settings;
-uniform float directional_depth_bias: hint_range(0.0, 100.0) = 5.0; //0.005 is ideal for demo's directional light, but omni/spot want 0.00075
-uniform float directional_height_bias = 40.0;
-uniform float perspective_depth_bias: hint_range(0.0, 100.0) = 0.75;
-uniform float perspective_height_bias = 32.0;
+uniform float directional_depth_bias: hint_range(0.0, 100.0) = 5.0;
+uniform float directional_height_bias: hint_range(0.0, 1000.0) = 40.0;
+uniform float perspective_depth_bias: hint_range(0.0, 100.0) = 2.5;
+uniform float perspective_height_bias: hint_range(0.0, 1000.0) = 32.0;
+uniform float perspective_decaying_depth_bias: hint_range(-100.0, 100.0) = 5.0; //Positive dec-bias + small bias is better overall, negative dec-bias + big bias is better very upclose.
 group_uniforms;
 
 group_uniforms world_background_noise;
@@ -258,7 +259,7 @@ void vertex() {
 
 		v_vertex.y = h;
 	}
-	
+
 	//Gotta find ways to compute good shadow offsets, and that requires digging into the engine's code.
 	//Directional lights, for example, have a shadow bias that varies from cascade to cascade so it's complex to counteract the effect.
 	/*
@@ -312,8 +313,9 @@ void vertex() {
 	bool is_directional_light = is_orthographic(PROJECTION_MATRIX);
 	//float depth_offset = float(int(TIME * 100.0) % 500) / 100000.0;
 	float depth_offset = (is_directional_light? directional_depth_bias : perspective_depth_bias) * 0.001; //Multiply to keep values in sensible range.
+	float fixed_decaying_offset = (is_directional_light? 0.0 : perspective_decaying_depth_bias) * 0.001;
 	float vertical_offset = (is_directional_light? directional_height_bias : perspective_height_bias) * 0.001;
-	
+
 	//DIRECTIONAL: Calculate the view space distance between far and near clip planes (needed to counteract Godot's per-cascade shadow bias).
 	//See Godot code renderer_scene_cull.cpp:2415: cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);
 	if (is_directional_light) {
@@ -323,7 +325,7 @@ void vertex() {
 		);
 		vertical_offset *= view_frustrum_depth * 0.01;
 	}
-	
+
 	// Convert model space to view space w/ skip_vertex_transform render mode
 	VERTEX = (VIEW_MATRIX * vec4(v_vertex - vec3(0, vertical_offset, 0), 1.0)).xyz;
 	POSITION = (PROJECTION_MATRIX * vec4(VERTEX, 1));
@@ -331,25 +333,11 @@ void vertex() {
 		POSITION.x,
 		POSITION.y,
 		//Do not convert to world depth before add: this way as the light cone expands and loses resolution, the vertex moves faster towards light source and doesn't leak light.
-		POSITION.z + depth_offset,
+		//POSITION.z + depth_offset,
+		POSITION.z + fixed_decaying_offset / POSITION.w + depth_offset,
+		//(POSITION.z * POSITION.w + fixed_decaying_offset) / POSITION.w + depth_offset, //Fixed then variable
+		//((POSITION.z + depth_offset) * POSITION.w + fixed_decaying_offset) / POSITION.w, //Variable then fixed
 		//(POSITION.z * POSITION.w + depth_offset) / POSITION.w, //This converts to world depth before offsetting, not as good as clip-space depth.
 		POSITION.w
 	);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
