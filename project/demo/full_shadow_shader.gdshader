@@ -224,12 +224,6 @@ void vertex() {
 	vec2 end_pos = (v_vertex.xz - shift * scale) * _vertex_density;
 	v_vertex.xz -= shift * scale * vertex_lerp;
 
-	// UV coordinates in world space. Values are 0 to _region_size within regions
-	UV = v_vertex.xz * _vertex_density;
-
-	// UV coordinates in region space + texel offset. Values are 0 to 1 within regions
-	UV2 = fma(UV, vec2(_region_texel_size), vec2(0.5 * _region_texel_size));
-
 	// Discard vertices for Holes. 1 lookup
 	ivec3 v_region = get_index_coord(start_pos, VERTEX_PASS);
 	uint control = floatBitsToUint(texelFetch(_control_maps, v_region, 0)).r;
