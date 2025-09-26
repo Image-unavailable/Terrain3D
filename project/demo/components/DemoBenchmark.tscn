@@ -31,7 +31,6 @@ noise = SubResource("FastNoiseLite_bfcw0")
 
 [sub_resource type="Terrain3DMaterial" id="Terrain3DMaterial_klrp5"]
 _shader_parameters = {
-&"": null,
 "bias_distance": 512.0,
 "blend_sharpness": 0.87,
 "depth_blur": 0.0,
@@ -101,5 +100,3 @@ cast_shadows = 3
 shadow_material = SubResource("ShaderMaterial_b7ioy")
 top_level = true
 metadata/_edit_lock_ = true
-
-[editable path="World"]

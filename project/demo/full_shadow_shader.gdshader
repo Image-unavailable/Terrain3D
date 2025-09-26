@@ -304,7 +304,7 @@ void vertex() {
 
 	`cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);`
 	*/
-	bool is_directional_light = is_orthographic(PROJECTION_MATRIX);
+	bool is_directional_light = false; //is_orthographic(PROJECTION_MATRIX);
 	//float depth_offset = float(int(TIME * 100.0) % 500) / 100000.0;
 	float depth_offset = (is_directional_light? directional_depth_bias : perspective_depth_bias) * 0.001; //Multiply to keep values in sensible range.
 	float fixed_decaying_offset = (is_directional_light? 0.0 : perspective_decaying_depth_bias) * 0.001;
@@ -319,19 +319,19 @@ void vertex() {
 		);
 		vertical_offset *= view_frustrum_depth * 0.01;
 	}
+	v_vertex -= vec3(0, vertical_offset, 0);
 
 	// Convert model space to view space w/ skip_vertex_transform render mode
-	VERTEX = (VIEW_MATRIX * vec4(v_vertex - vec3(0, vertical_offset, 0), 1.0)).xyz;
-	POSITION = (PROJECTION_MATRIX * vec4(VERTEX, 1));
-	POSITION = vec4(
-		POSITION.x,
-		POSITION.y,
-		//Do not convert to world depth before add: this way as the light cone expands and loses resolution, the vertex moves faster towards light source and doesn't leak light.
-		//POSITION.z + depth_offset,
-		POSITION.z + fixed_decaying_offset / POSITION.w + depth_offset,
-		//(POSITION.z * POSITION.w + fixed_decaying_offset) / POSITION.w + depth_offset, //Fixed then variable
-		//((POSITION.z + depth_offset) * POSITION.w + fixed_decaying_offset) / POSITION.w, //Variable then fixed
-		//(POSITION.z * POSITION.w + depth_offset) / POSITION.w, //This converts to world depth before offsetting, not as good as clip-space depth.
-		POSITION.w
+	vec3 view_pos = (VIEW_MATRIX * vec4(v_vertex, 1.0)).xyz;
+	vec4 clip_pos = (PROJECTION_MATRIX * vec4(view_pos, 1));
+	clip_pos = vec4(
+		clip_pos.x,
+		clip_pos.y,
+		clip_pos.z + fixed_decaying_offset / clip_pos.w + depth_offset,
+		clip_pos.w
 	);
+	//Setting clip position through POSITION breaks dual-paraboloid omnilight shadows, so using VERTEX is a necessary workaround.
+	//This happens because Godot uses some special math for dual-paraboloid omnis which accesses hidden data not exposed to normal shaders.
+	//See here for the magic sauce: servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl:475
+	VERTEX = (INV_PROJECTION_MATRIX * clip_pos).xyz;
 }
