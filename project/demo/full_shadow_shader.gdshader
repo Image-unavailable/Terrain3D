@@ -308,16 +308,15 @@ void vertex() {
 	//float depth_offset = float(int(TIME * 100.0) % 500) / 100000.0;
 	float depth_offset = (is_directional_light? directional_depth_bias : perspective_depth_bias) * 0.001; //Multiply to keep values in sensible range.
 	float fixed_decaying_offset = (is_directional_light? 0.0 : perspective_decaying_depth_bias) * 0.001;
-	float vertical_offset = (is_directional_light? directional_height_bias : perspective_height_bias) * 0.001;
+	float vertical_offset = (is_directional_light? directional_height_bias : perspective_height_bias) * 0.0001;
 
 	//DIRECTIONAL: Calculate the view space distance between far and near clip planes (needed to counteract Godot's per-cascade shadow bias).
 	//See Godot code renderer_scene_cull.cpp:2415: cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);
 	if (is_directional_light) {
-		float view_frustrum_depth = length(
-			(INV_PROJECTION_MATRIX * vec4(0.0, 0.0, 1.0, 1.0)).xyz -
-			(INV_PROJECTION_MATRIX * vec4(0.0, 0.0, 0, 1.0)).xyz
-		);
-		vertical_offset *= view_frustrum_depth * 0.01;
+		const float vertical_offset_scale = 0.1;
+		float normalization_factor = PROJECTION_MATRIX[2].z;
+		float projection_depth = vertical_offset_scale / normalization_factor; //think of this as ((1 / normalization_factor) * vertical_offset_scale) with one less multiplication.
+		vertical_offset *= projection_depth;
 	}
 	v_vertex -= vec3(0, vertical_offset, 0);
 
