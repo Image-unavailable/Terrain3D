@@ -44,7 +44,6 @@ noise = SubResource("FastNoiseLite_d8lcj")
 
 [sub_resource type="Terrain3DMaterial" id="Terrain3DMaterial_jrc01"]
 _shader_parameters = {
-&"": null,
 "_mouse_layer": 2147483648,
 "auto_base_texture": 0,
 "auto_height_reduction": 0.05,
@@ -148,6 +147,7 @@ light_color = Color(0, 1, 0, 1)
 light_energy = 16.0
 shadow_enabled = true
 omni_range = 20.0
+omni_shadow_mode = 0
 
 [node name="SpotLight3D" type="SpotLight3D" parent="Shadow check box"]
 transform = Transform3D(1, 7.99266e-09, 2.32491e-09, -7.99266e-09, 0.843978, 0.536377, 2.32491e-09, -0.536377, 0.843978, -26.5396, 24.2338, 20.4165)

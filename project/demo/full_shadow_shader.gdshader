@@ -194,12 +194,23 @@ float get_noise_height(const vec2 uv) {
 
 bool is_orthographic(mat4 matrix) {
 	//Broken for paraboloid omnis.
-	//return matrix[2].w == 0.0;
-	vec3 a1 = vec3(0, 1, 0);
+	return matrix[2].w == 0.0 && matrix[3].w == 1.0;
+	/*vec3 a1 = vec3(0, 1, 0);
 	vec3 b1 = vec3(0, 1, 1);
 	vec4 a2 = matrix * vec4(a1, 1);
 	vec4 b2 = matrix * vec4(b1, 1);
-	return a2.w == b2.w; //This works accurately as far as I can test but I have no idea why or how.
+	return a2.w == b2.w;*/ //This works accurately as far as I can test but I have no idea why or how.
+}
+
+bool is_directional_check_every_darn_thing(mat4 view_matrix, mat4 projection_matrix, mat4 cam_inverse_view_matrix, vec3 camera_world_position) {
+	return false;
+	if (!is_orthographic(projection_matrix)) {
+		return false;
+	} else {
+		vec4 view = view_matrix * vec4(camera_world_position, 1.0);
+		vec4 clip = projection_matrix * view;
+		return view.x >= -0.1 && view.x <= 0.1;
+	}
 }
 
 void vertex() {
@@ -306,7 +317,18 @@ void vertex() {
 
 	`cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);`
 	*/
-	bool is_directional_light = is_orthographic(PROJECTION_MATRIX);
+	bool ortographic = is_orthographic(PROJECTION_MATRIX);
+	bool is_directional_light = false;
+	if (ortographic) {
+		//is_directional_light = true;
+		vec4 view = VIEW_MATRIX * vec4(CAMERA_POSITION_WORLD, 1.0);
+		vec4 clip = PROJECTION_MATRIX * view;
+		//vec4 clip = PROJECTION_MATRIX * view;
+		bool is_paraboloid = clip.z >= 0.45 && clip.z <= 0.55; //This is true for paraboloids but false for directionals.
+		is_directional_light = !is_paraboloid;
+	}
+	//is_directional_light = false;
+	//bool is_directional_light = is_directional_check_every_darn_thing(VIEW_MATRIX, PROJECTION_MATRIX, MAIN_CAM_INV_VIEW_MATRIX, CAMERA_POSITION_WORLD);
 	//float depth_bias = float(int(TIME * 100.0) % 500) / 100000.0;
 	float depth_bias = (is_directional_light? directional_depth_bias : perspective_depth_bias) * 0.001; //Multiply to keep values in sensible range.
 	float fixed_decaying_bias = (is_directional_light? 0.0 : perspective_decaying_depth_bias) * 0.01;
@@ -330,4 +352,5 @@ void vertex() {
 	//This happens because Godot uses some special math for dual-paraboloid omnis which accesses hidden data not exposed to normal shaders.
 	//See here for the magic sauce: servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl:475
 	VERTEX = (VIEW_MATRIX * vec4(v_vertex, 1.0)).xyz; // Convert model space to view space w/ skip_vertex_transform render mode
+	//sPOSITION = (PROJECTION_MATRIX * vec4(VERTEX, 1));
 }
