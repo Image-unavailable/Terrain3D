@@ -57,11 +57,11 @@ uniform highp sampler2DArray _control_maps : repeat_disable;
 // Public uniforms
 
 group_uniforms shadow_settings;
-uniform float directional_depth_bias: hint_range(0.0, 100.0) = 5.0;
-uniform float directional_height_bias: hint_range(0.0, 1000.0) = 40.0;
-uniform float perspective_depth_bias: hint_range(0.0, 100.0) = 2.5;
-uniform float perspective_height_bias: hint_range(0.0, 1000.0) = 32.0;
-uniform float perspective_decaying_depth_bias: hint_range(-100.0, 100.0) = 5.0; //Positive dec-bias + small bias is better overall, negative dec-bias + big bias is better very upclose.
+uniform float directional_depth_bias: hint_range(0.0, 1000.0) = 50.0;
+uniform float directional_height_bias: hint_range(0.0, 100.0) = 4.0;
+uniform float perspective_depth_bias: hint_range(0.0, 1000.0) = 50;
+uniform float perspective_height_bias: hint_range(0.0, 1000.0) = 20.0;
+uniform float perspective_decaying_depth_bias: hint_range(-1000.0, 1000.0) = 0.0; //Positive dec-bias + small bias is better overall, negative dec-bias + big bias is better very upclose.
 group_uniforms;
 
 group_uniforms world_background_noise;
@@ -193,6 +193,8 @@ float get_noise_height(const vec2 uv) {
 // World Noise Functions End
 
 bool is_orthographic(mat4 matrix) {
+	//Broken for paraboloid omnis.
+	//return matrix[2].w == 0.0;
 	vec3 a1 = vec3(0, 1, 0);
 	vec3 b1 = vec3(0, 1, 1);
 	vec4 a2 = matrix * vec4(a1, 1);
@@ -304,33 +306,28 @@ void vertex() {
 
 	`cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);`
 	*/
-	bool is_directional_light = false; //is_orthographic(PROJECTION_MATRIX);
-	//float depth_offset = float(int(TIME * 100.0) % 500) / 100000.0;
-	float depth_offset = (is_directional_light? directional_depth_bias : perspective_depth_bias) * 0.001; //Multiply to keep values in sensible range.
-	float fixed_decaying_offset = (is_directional_light? 0.0 : perspective_decaying_depth_bias) * 0.001;
-	float vertical_offset = (is_directional_light? directional_height_bias : perspective_height_bias) * 0.0001;
+	bool is_directional_light = is_orthographic(PROJECTION_MATRIX);
+	//float depth_bias = float(int(TIME * 100.0) % 500) / 100000.0;
+	float depth_bias = (is_directional_light? directional_depth_bias : perspective_depth_bias) * 0.001; //Multiply to keep values in sensible range.
+	float fixed_decaying_bias = (is_directional_light? 0.0 : perspective_decaying_depth_bias) * 0.01;
+	float vertical_bias = (is_directional_light? directional_height_bias : perspective_height_bias) * 0.001;
+	float normalization_factor = PROJECTION_MATRIX[2].z;
 
-	//DIRECTIONAL: Calculate the view space distance between far and near clip planes (needed to counteract Godot's per-cascade shadow bias).
-	//See Godot code renderer_scene_cull.cpp:2415: cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);
 	if (is_directional_light) {
-		const float vertical_offset_scale = 0.1;
-		float normalization_factor = PROJECTION_MATRIX[2].z;
-		float projection_depth = vertical_offset_scale / normalization_factor; //think of this as ((1 / normalization_factor) * vertical_offset_scale) with one less multiplication.
-		vertical_offset *= projection_depth;
+		//DIRECTIONAL: Calculate the view space distance between far and near clip planes (needed to counteract Godot's per-cascade shadow bias).
+		//See Godot code renderer_scene_cull.cpp:2415: cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);
+		const float bias_scale = 0.1;
+		float projection_depth = bias_scale / normalization_factor; //think of this as ((1 / normalization_factor) * vertical_bias_scale) with one less multiplication.
+		v_vertex += CAMERA_DIRECTION_WORLD * depth_bias * projection_depth;
+		v_vertex.y -= vertical_bias * projection_depth;
+	} else {
+		vec3 delta = v_vertex - CAMERA_POSITION_WORLD;
+		v_vertex -= delta * depth_bias + normalize(delta) * fixed_decaying_bias;
+		v_vertex.y -= vertical_bias;
 	}
-	v_vertex -= vec3(0, vertical_offset, 0);
-
-	// Convert model space to view space w/ skip_vertex_transform render mode
-	vec3 view_pos = (VIEW_MATRIX * vec4(v_vertex, 1.0)).xyz;
-	vec4 clip_pos = (PROJECTION_MATRIX * vec4(view_pos, 1));
-	clip_pos = vec4(
-		clip_pos.x,
-		clip_pos.y,
-		clip_pos.z + fixed_decaying_offset / clip_pos.w + depth_offset,
-		clip_pos.w
-	);
+	
 	//Setting clip position through POSITION breaks dual-paraboloid omnilight shadows, so using VERTEX is a necessary workaround.
 	//This happens because Godot uses some special math for dual-paraboloid omnis which accesses hidden data not exposed to normal shaders.
 	//See here for the magic sauce: servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl:475
-	VERTEX = (INV_PROJECTION_MATRIX * clip_pos).xyz;
+	VERTEX = (VIEW_MATRIX * vec4(v_vertex, 1.0)).xyz; // Convert model space to view space w/ skip_vertex_transform render mode
 }
