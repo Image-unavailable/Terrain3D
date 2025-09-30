@@ -57,6 +57,8 @@ uniform highp sampler2DArray _control_maps : repeat_disable;
 // Public uniforms
 
 group_uniforms shadow_settings;
+uniform bool enable_biasing = true;
+uniform bool one_sample_geomorph = false;
 uniform float directional_depth_bias: hint_range(0.0, 1000.0) = 50.0;
 uniform float directional_height_bias: hint_range(0.0, 100.0) = 4.0;
 uniform float perspective_depth_bias: hint_range(0.0, 1000.0) = 50;
@@ -233,6 +235,14 @@ void vertex() {
 			) :
 		// Symetric shift
 		v_fract * round((fract(v_vertex.xz * 0.25 / scale) - 0.5) * 4.0);
+
+	if (one_sample_geomorph) {
+		// SHADOW MESH snap
+		shift = round(shift);
+		vertex_lerp = round(vertex_lerp);
+		// END
+	}
+
 	vec2 start_pos = v_vertex.xz * _vertex_density;
 	vec2 end_pos = (v_vertex.xz - shift * scale) * _vertex_density;
 	v_vertex.xz -= shift * scale * vertex_lerp;
@@ -249,7 +259,15 @@ void vertex() {
 		// Set final vertex height & calculate vertex normals. 3 lookups
 		ivec3 coord_a = get_index_coord(start_pos, VERTEX_PASS);
 		ivec3 coord_b = get_index_coord(end_pos, VERTEX_PASS);
-		float h = mix(texelFetch(_height_maps, coord_a, 0).r,texelFetch(_height_maps, coord_b, 0).r,vertex_lerp);
+		float h;
+		if (!one_sample_geomorph) {
+			// Same approach as visible mesh
+			h = mix(texelFetch(_height_maps, coord_a, 0).r,texelFetch(_height_maps, coord_b, 0).r,vertex_lerp);
+		} else {
+			// SHADOW MESH
+			ivec3 snapcoord = vertex_lerp < 0.5 ? coord_a : coord_b;
+			h = texelFetch(_height_maps, snapcoord, 0).r;
+		}
 		// World Noise
 		if (_background_mode == 2u) {
 			vec2 nuv_a = fma(start_pos, vec2(_region_texel_size), vec2(0.5 * _region_texel_size));
@@ -267,87 +285,89 @@ void vertex() {
 		v_vertex.y = h;
 	}
 
-	//Gotta find ways to compute good shadow offsets, and that requires digging into the engine's code.
-	//Directional lights, for example, have a shadow bias that varies from cascade to cascade so it's complex to counteract the effect.
-	/*
-	From Godot 4.5 source at: servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl:2081
+	if (enable_biasing) {
+		//Gotta find ways to compute good shadow offsets, and that requires digging into the engine's code.
+		//Directional lights, for example, have a shadow bias that varies from cascade to cascade so it's complex to counteract the effect.
+		/*
+		From Godot 4.5 source at: servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl:2081
 
-	```glsl
-	#define BIAS_FUNC(m_var, m_idx)                                                                 \
-		m_var.xyz += light_dir * directional_lights.data[i].shadow_bias[m_idx];                     \
-		vec3 normal_bias = base_normal_bias * directional_lights.data[i].shadow_normal_bias[m_idx]; \
-		normal_bias -= light_dir * dot(light_dir, normal_bias);                                     \
-		m_var.xyz += normal_bias;
-	```
+		```glsl
+		#define BIAS_FUNC(m_var, m_idx)                                                                 \
+			m_var.xyz += light_dir * directional_lights.data[i].shadow_bias[m_idx];                     \
+			vec3 normal_bias = base_normal_bias * directional_lights.data[i].shadow_normal_bias[m_idx]; \
+			normal_bias -= light_dir * dot(light_dir, normal_bias);                                     \
+			m_var.xyz += normal_bias;
+		```
 
-	`m_idx` seems to be the cascade for which to compute the bias, either 0,1,2,3.
+		`m_idx` seems to be the cascade for which to compute the bias, either 0,1,2,3.
 
-	Due to `directional_lights.data[i].shadow_bias[m_idx]`, it seems like each cascade has a different CPU-set bias, not computed from the shader.
+		Due to `directional_lights.data[i].shadow_bias[m_idx]`, it seems like each cascade has a different CPU-set bias, not computed from the shader.
 
-	This `DirectionalLightdata` GPU struct is defined at servers/rendering/renderer_rd/shaders/light_data_inc.glsl:57
+		This `DirectionalLightdata` GPU struct is defined at servers/rendering/renderer_rd/shaders/light_data_inc.glsl:57
 
-	The CPU equivalent is at servers/rendering/renderer_rd/storage_rd/light_storage.h:186
+		The CPU equivalent is at servers/rendering/renderer_rd/storage_rd/light_storage.h:186
 
-	Shadow bias is a vector4 and that's fine, because once again each cascade has a separate bias.
+		Shadow bias is a vector4 and that's fine, because once again each cascade has a separate bias.
 
-	Only one line of code in the entire engine ever writes to that buffer, and it's this one at: servers/rendering/renderer_rd/storage_rd/light_storage.cpp:715
+		Only one line of code in the entire engine ever writes to that buffer, and it's this one at: servers/rendering/renderer_rd/storage_rd/light_storage.cpp:715
 
-	```cpp
-	float bias_scale = light_instance->shadow_transform[j].bias_scale * light_data.soft_shadow_scale;
-	light_data.shadow_bias[j] = light->param[RS::LIGHT_PARAM_SHADOW_BIAS] / 100.0 * bias_scale;
-	```
+		```cpp
+		float bias_scale = light_instance->shadow_transform[j].bias_scale * light_data.soft_shadow_scale;
+		light_data.shadow_bias[j] = light->param[RS::LIGHT_PARAM_SHADOW_BIAS] / 100.0 * bias_scale;
+		```
 
-	`bias_scale` comes from `ShadowTransform shadow_transform[6];` at servers/rendering/renderer_rd/storage_rd/light_storage.h:107
+		`bias_scale` comes from `ShadowTransform shadow_transform[6];` at servers/rendering/renderer_rd/storage_rd/light_storage.h:107
 
-	Shadow transforms are set through `light_instance_set_shadow_transform` in from servers/rendering/renderer_rd/storage_rd/light_storage.cpp:515
+		Shadow transforms are set through `light_instance_set_shadow_transform` in from servers/rendering/renderer_rd/storage_rd/light_storage.cpp:515
 
-	Shadow transforms for directional lights are set from servers/rendering/renderer_scene_cull.cpp:3358
+		Shadow transforms for directional lights are set from servers/rendering/renderer_scene_cull.cpp:3358
 
-	```cpp
-	const Cull::Shadow::Cascade &c = cull.shadows[i].cascades[j];
-	//			print_line("shadow " + itos(i) + " cascade " + itos(j) + " elements: " + itos(c.cull_result.size()));
-	RSG::light_storage->light_instance_set_shadow_transform(cull.shadows[i].light_instance, c.projection, c.transform, c.zfar, c.split, j, c.shadow_texel_size, c.bias_scale, c.range_begin, c.uv_scale);
-	```
+		```cpp
+		const Cull::Shadow::Cascade &c = cull.shadows[i].cascades[j];
+		//			print_line("shadow " + itos(i) + " cascade " + itos(j) + " elements: " + itos(c.cull_result.size()));
+		RSG::light_storage->light_instance_set_shadow_transform(cull.shadows[i].light_instance, c.projection, c.transform, c.zfar, c.split, j, c.shadow_texel_size, c.bias_scale, c.range_begin, c.uv_scale);
+		```
 
-	...Which takes the bias straight through a Cascade struct! So much passing stuff around.
+		...Which takes the bias straight through a Cascade struct! So much passing stuff around.
 
-	Once again, each cascade has its own shadow bias.
+		Once again, each cascade has its own shadow bias.
 
-	And finally, we get to the only line of code in the entire engine that sets the shadow bias for cascades: servers/rendering/renderer_scene_cull.cpp:2418
+		And finally, we get to the only line of code in the entire engine that sets the shadow bias for cascades: servers/rendering/renderer_scene_cull.cpp:2418
 
-	`cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);`
-	*/
-	bool ortographic = is_orthographic(PROJECTION_MATRIX);
-	bool is_directional_light = false;
-	if (ortographic) {
-		//is_directional_light = true;
-		vec4 view = VIEW_MATRIX * vec4(CAMERA_POSITION_WORLD, 1.0);
-		vec4 clip = PROJECTION_MATRIX * view;
-		//vec4 clip = PROJECTION_MATRIX * view;
-		bool is_paraboloid = clip.z >= 0.45 && clip.z <= 0.55; //This is true for paraboloids but false for directionals.
-		is_directional_light = !is_paraboloid;
+		`cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);`
+		*/
+		bool ortographic = is_orthographic(PROJECTION_MATRIX);
+		bool is_directional_light = false;
+		if (ortographic) {
+			//is_directional_light = true;
+			vec4 view = VIEW_MATRIX * vec4(CAMERA_POSITION_WORLD, 1.0);
+			vec4 clip = PROJECTION_MATRIX * view;
+			//vec4 clip = PROJECTION_MATRIX * view;
+			bool is_paraboloid = clip.z >= 0.45 && clip.z <= 0.55; //This is true for paraboloids but false for directionals.
+			is_directional_light = !is_paraboloid;
+		}
+		//is_directional_light = false;
+		//bool is_directional_light = is_directional_check_every_darn_thing(VIEW_MATRIX, PROJECTION_MATRIX, MAIN_CAM_INV_VIEW_MATRIX, CAMERA_POSITION_WORLD);
+		//float depth_bias = float(int(TIME * 100.0) % 500) / 100000.0;
+		float depth_bias = (is_directional_light? directional_depth_bias : perspective_depth_bias) * 0.001; //Multiply to keep values in sensible range.
+		float fixed_decaying_bias = (is_directional_light? 0.0 : perspective_decaying_depth_bias) * 0.01;
+		float vertical_bias = (is_directional_light? directional_height_bias : perspective_height_bias) * 0.001;
+		float normalization_factor = PROJECTION_MATRIX[2].z;
+
+		if (is_directional_light) {
+			//DIRECTIONAL: Calculate the view space distance between far and near clip planes (needed to counteract Godot's per-cascade shadow bias).
+			//See Godot code renderer_scene_cull.cpp:2415: cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);
+			const float bias_scale = 0.1;
+			float projection_depth = bias_scale / normalization_factor; //think of this as ((1 / normalization_factor) * vertical_bias_scale) with one less multiplication.
+			v_vertex += CAMERA_DIRECTION_WORLD * depth_bias * projection_depth;
+			v_vertex.y -= vertical_bias * projection_depth;
+		} else {
+			vec3 delta = v_vertex - CAMERA_POSITION_WORLD;
+			v_vertex -= delta * depth_bias + normalize(delta) * fixed_decaying_bias;
+			v_vertex.y -= vertical_bias;
+		}
 	}
-	//is_directional_light = false;
-	//bool is_directional_light = is_directional_check_every_darn_thing(VIEW_MATRIX, PROJECTION_MATRIX, MAIN_CAM_INV_VIEW_MATRIX, CAMERA_POSITION_WORLD);
-	//float depth_bias = float(int(TIME * 100.0) % 500) / 100000.0;
-	float depth_bias = (is_directional_light? directional_depth_bias : perspective_depth_bias) * 0.001; //Multiply to keep values in sensible range.
-	float fixed_decaying_bias = (is_directional_light? 0.0 : perspective_decaying_depth_bias) * 0.01;
-	float vertical_bias = (is_directional_light? directional_height_bias : perspective_height_bias) * 0.001;
-	float normalization_factor = PROJECTION_MATRIX[2].z;
 
-	if (is_directional_light) {
-		//DIRECTIONAL: Calculate the view space distance between far and near clip planes (needed to counteract Godot's per-cascade shadow bias).
-		//See Godot code renderer_scene_cull.cpp:2415: cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);
-		const float bias_scale = 0.1;
-		float projection_depth = bias_scale / normalization_factor; //think of this as ((1 / normalization_factor) * vertical_bias_scale) with one less multiplication.
-		v_vertex += CAMERA_DIRECTION_WORLD * depth_bias * projection_depth;
-		v_vertex.y -= vertical_bias * projection_depth;
-	} else {
-		vec3 delta = v_vertex - CAMERA_POSITION_WORLD;
-		v_vertex -= delta * depth_bias + normalize(delta) * fixed_decaying_bias;
-		v_vertex.y -= vertical_bias;
-	}
-	
 	//Setting clip position through POSITION breaks dual-paraboloid omnilight shadows, so using VERTEX is a necessary workaround.
 	//This happens because Godot uses some special math for dual-paraboloid omnis which accesses hidden data not exposed to normal shaders.
 	//See here for the magic sauce: servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl:475
